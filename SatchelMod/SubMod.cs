@@ -17,7 +17,7 @@ namespace Satchel
         /// </summary>
         public Core SatchelCore { get => Mod.SatchelCore; }
 
-        private TBase Mod { get; set; }
+        private protected TBase Mod { get; set; }
         private object InheritingObj { get; set; }
 
         private List<((string scene, string obj) path, FieldInfo field)> PreloadFields { get; set; } = new();
@@ -39,7 +39,7 @@ namespace Satchel
         protected void ctor(object inherit)
         {
             if (InheritingObj is not null)
-                throw new InvalidOperationException($"You're not allowed to call the {nameof(ctor)} method of {nameof(SatchelMod)} more than once.");
+                throw new InvalidOperationException($"You're not allowed to call the {nameof(ctor)} method of {nameof(SubMod<TBase>)} more than once.");
             InheritingObj = inherit;
             var InheritingType = inherit.GetType();
 
