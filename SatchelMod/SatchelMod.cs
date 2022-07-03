@@ -23,6 +23,8 @@ namespace Satchel
         /// </summary>
         public Core SatchelCore { get; private set; } = new();
 
+        internal List<SubMod<SatchelMod>> SubMods { get; private set; } = new();
+
         private object InheritingObj { get; set; } = null!;
         private Type InheritingType { get; set; } = null!;
         private List<((string, string), FieldInfo)> PreloadFields { get; set; } = new();
@@ -35,7 +37,7 @@ namespace Satchel
         /// Needs to be called in the constructor of the inheriting type
         /// </summary>
         /// <param name="inherit">The object that inherits the class</param>
-        public void ctor<T>(T inherit) where T: notnull, SatchelMod
+        protected void ctor<T>(T inherit) where T: notnull, SatchelMod
         {
             if (InheritingObj is not null)
                 throw new InvalidOperationException($"You're not allowed to call the {nameof(ctor)} method of {nameof(SatchelMod)} more than once.");
@@ -157,7 +159,9 @@ namespace Satchel
             base.Initialize(preloadedObjects);
             foreach (var item in InitMethods)
                 item.Invoke(InheritingObj, null);
-            OnInitialize?.Invoke();
+
+            foreach (var item in SubMods)
+                item.LoadPreloads();
 
             #region Cleanup
             PreloadFields.Clear();
@@ -172,6 +176,8 @@ namespace Satchel
             InitMethods = null!;
             Task.Run(GC.Collect);
             #endregion
+
+            OnInitialize?.Invoke();
         }
     }
 
@@ -201,12 +207,19 @@ namespace Satchel
     {
         public SubTEST() : base(TEST.Instance)
         {
-
+            ctor(this);
         }
 
-        public override void Initialize()
+        protected override void Initialize()
         {
-            base.Initialize();
+            //Do stuff.
+            base.Initialize(); //Not required, something normal people probably won't do.
+        }
+
+        [Initializer]
+        public void thing()
+        {
+
         }
     }
 }
