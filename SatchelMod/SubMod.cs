@@ -20,10 +20,10 @@ namespace Satchel
         private TBase Mod { get; set; }
         private object InheritingObj { get; set; }
 
-        private List<((string, string), FieldInfo)> PreloadFields { get; set; } = new();
-        private List<((string, string), PropertyInfo)> PreloadProperties { get; set; } = new();
-        private List<(string, FieldInfo)> PreloadGroupFields { get; set; } = new();
-        private List<(string, PropertyInfo)> PreloadGroupProperties { get; set; } = new();
+        private List<((string scene, string obj) path, FieldInfo field)> PreloadFields { get; set; } = new();
+        private List<((string scene, string obj) path, PropertyInfo property)> PreloadProperties { get; set; } = new();
+        private List<(string scene, FieldInfo field)> PreloadGroupFields { get; set; } = new();
+        private List<(string scene, PropertyInfo property)> PreloadGroupProperties { get; set; } = new();
         private List<MethodInfo> InitMethods { get; set; } = new();
 
         public SubMod(TBase mod)
@@ -42,35 +42,25 @@ namespace Satchel
                 throw new InvalidOperationException($"You're not allowed to call the {nameof(ctor)} method of {nameof(SatchelMod)} more than once.");
             InheritingObj = inherit;
             var InheritingType = inherit.GetType();
-            foreach (var item in InheritingType
-                .GetMembers(BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.GetField | BindingFlags.GetProperty | BindingFlags.Instance | BindingFlags.Static)
-                .Where(x => x.GetCustomAttribute<PreloadAttribute>() is not null)
-                .Select(x => (x.GetCustomAttribute<PreloadAttribute>(), x)))
+
+            foreach (var (attr, member) in PreloadAttribute.GetForType(InheritingType))
             {
-                if (item.x is FieldInfo field && (field.FieldType == typeof(GameObject) || item.Item1.IgnoreIsGOCheck))
-                    PreloadFields.Add((item.Item1.GetTuple(), field));
-                else if (item.x is PropertyInfo property && (property.PropertyType == typeof(GameObject) || item.Item1.IgnoreIsGOCheck))
-                    PreloadProperties.Add((item.Item1.GetTuple(), property));
+                if (member is FieldInfo field && (field.FieldType == typeof(GameObject) || attr.IgnoreIsGOCheck))
+                    PreloadFields.Add((attr.GetTuple(), field));
+                else if (member is PropertyInfo property && (property.PropertyType == typeof(GameObject) || attr.IgnoreIsGOCheck))
+                    PreloadProperties.Add((attr.GetTuple(), property));
             }
-            foreach (var item in InheritingType
-                .GetMembers(BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.GetField | BindingFlags.GetProperty | BindingFlags.Instance | BindingFlags.Static)
-                .Where(x => x.GetCustomAttribute<PreloadCollectionAttribute>() is not null)
-                .Select(x => (x.GetCustomAttribute<PreloadCollectionAttribute>(), x)))
+
+            foreach (var (attr, member) in PreloadCollectionAttribute.GetForType(InheritingType))
             {
-                if (item.x is FieldInfo field && field.FieldType == typeof(Dictionary<string, GameObject>))
-                    PreloadGroupFields.Add((item.Item1.Scene, field));
-                else if (item.x is PropertyInfo property && property.PropertyType == typeof(Dictionary<string, GameObject>))
-                    PreloadGroupProperties.Add((item.Item1.Scene, property));
+                if (member is FieldInfo field && field.FieldType == typeof(Dictionary<string, GameObject>))
+                    PreloadGroupFields.Add((attr.Scene, field));
+                else if (member is PropertyInfo property && property.PropertyType == typeof(Dictionary<string, GameObject>))
+                    PreloadGroupProperties.Add((attr.Scene, property));
             }
-            foreach (var item in InheritingType
-                .GetMethods(BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance | BindingFlags.Static)
-                .Where(x => x.GetCustomAttributes().Any(x => x.GetType() == typeof(InitializerAttribute))))
-            {
-                if (!item.GetParameters().Any())
-                    InitMethods.Add(item);
-                else
-                    Debug.Log($"Method {item.Name} is not a valid initialize method.");
-            }
+
+            foreach (var item in InitializerAttribute.GetForType(InheritingType))
+                InitMethods.Add(item);
 
             Mod.SubMods.Add(this as SubMod<SatchelMod>);
         }
@@ -81,7 +71,7 @@ namespace Satchel
         internal List<(string, string)> GetPreloadNames()
         {
             var list = new List<(string, string)>(PreloadFields.Select(x => x.Item1));
-            list.AddRange(PreloadProperties.Select(x => x.Item1));
+            list.AddRange(PreloadProperties.Select(x => x.path));
             list.AddRange(CustomPreloads());
             return list;
         }
@@ -93,68 +83,70 @@ namespace Satchel
         public virtual List<(string, string)> CustomPreloads() =>
             new();
 
-        internal void LoadPreloads()
+        protected internal virtual void LoadPreloads()
         {
             if (InheritingObj is null)
                 throw new InvalidOperationException($"The {nameof(ctor)} method needs to be called!");
-            foreach (var item in PreloadGroupFields)
+
+            foreach (var (scene, field) in PreloadGroupFields)
             {
                 try
                 {
-                    var preload = Preloads[item.Item1];
-                    item.Item2.SetValue(InheritingObj, preload);
+                    var preload = Preloads[scene];
+                    field.SetValue(InheritingObj, preload);
                 }
                 catch (KeyNotFoundException)
                 {
-                    Debug.LogError($"Preload ({item.Item1}) was not found.");
-                    Mod.Log($"No preloads for scene {item.Item1} were found! Assigning null instead.");
-                    item.Item2.SetValue(InheritingObj, null);
+                    Debug.LogError($"Preload ({scene}) was not found.");
+                    Mod.Log($"No preloads for scene {scene} were found! Assigning null instead.");
+                    field.SetValue(InheritingObj, null);
                 }
             }
-            foreach (var item in PreloadFields)
+
+            foreach (var (path, field) in PreloadFields)
             {
                 try
                 {
-                    var preload = Preloads[item.Item1.Item1][item.Item1.Item2];
-                    item.Item2.SetValue(InheritingObj, preload);
+                    var preload = Preloads[path.scene][path.obj];
+                    field.SetValue(InheritingObj, preload);
                 }
                 catch (KeyNotFoundException)
                 {
-                    Debug.LogError($"Preload ({item.Item1.Item1}, {item.Item1.Item2}) was not found.");
-                    Mod.Log($"Preload {item.Item1.Item2} in scene {item.Item1.Item1} was not found! Assigning null instead.");
-                    item.Item2.SetValue(InheritingObj, null);
+                    Debug.LogError($"Preload ({path.scene}, {path.obj}) was not found.");
+                    Mod.Log($"Preload {path.obj} in scene {path.scene} was not found! Assigning null instead.");
+                    field.SetValue(InheritingObj, null);
                 }
             }
-            foreach (var item in PreloadGroupProperties)
+
+            foreach (var (scene, property) in PreloadGroupProperties)
             {
                 try
                 {
-                    var preload = Preloads[item.Item1];
-                    item.Item2.SetValue(InheritingObj, preload);
+                    var preload = Preloads[scene];
+                    property.SetValue(InheritingObj, preload);
                 }
                 catch (KeyNotFoundException)
                 {
-                    Debug.LogError($"Preload ({item.Item1}) was not found.");
-                    Mod.Log($"No preloads for scene {item.Item1} were found! Assigning null instead.");
-                    item.Item2.SetValue(InheritingObj, null);
+                    Debug.LogError($"Preload ({scene}) was not found.");
+                    Mod.Log($"No preloads for scene {scene} were found! Assigning null instead.");
+                    property.SetValue(InheritingObj, null);
                 }
             }
-            foreach (var item in PreloadProperties)
+
+            foreach (var (path, property) in PreloadProperties)
             {
                 try
                 {
-                    var preload = Preloads[item.Item1.Item1][item.Item1.Item2];
-                    item.Item2.SetValue(InheritingObj, preload);
+                    var preload = Preloads[path.scene][path.obj];
+                    property.SetValue(InheritingObj, preload);
                 }
                 catch (KeyNotFoundException)
                 {
-                    Debug.LogError($"Preload ({item.Item1.Item1}, {item.Item1.Item2}) was not found.");
-                    Mod.Log($"Preload {item.Item1.Item2} in scene {item.Item1.Item1} was not found! Assigning null instead.");
-                    item.Item2.SetValue(InheritingObj, null);
+                    Debug.LogError($"Preload ({path.scene}, {path.obj}) was not found.");
+                    Mod.Log($"Preload {path.obj} in scene {path.scene} was not found! Assigning null instead.");
+                    property.SetValue(InheritingObj, null);
                 }
             }
-            foreach (var item in InitMethods)
-                item.Invoke(InheritingObj, null);
 
             #region Cleanup
             PreloadFields.Clear();
@@ -179,7 +171,7 @@ namespace Satchel
         }
 
         /// <summary>
-        /// Called right before all [<see cref="InitializerAttribute"/>] methods.
+        /// Called right before all [<see cref="InitializerAttribute"/>] methods, and after all RMod.Initialize methods.
         /// </summary>
         protected virtual void Initialize() { }
     }
